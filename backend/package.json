@@ -1,0 +1,17 @@
+{
+  "name": "alcohol-monitor-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MQTT to mobile WebSocket gateway for the ESP32 prototype",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "mqtt": "^5.16.0",
+    "ws": "^8.18.3"
+  }
+}

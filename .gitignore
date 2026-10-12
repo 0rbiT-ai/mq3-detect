@@ -1,0 +1,26 @@
+# Node / Expo
+**/node_modules/
+Anti-AI-UI/
+wifi_mqtt/
+frontend/.expo/
+frontend/dist/
+frontend/web-build/
+frontend/android/
+frontend/ios/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+backend/.env
+backend/.env.local
+backend/.env.*.local
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local hardware artifacts and installers
+*.exe
+*.log
+
