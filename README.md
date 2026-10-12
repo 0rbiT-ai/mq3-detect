@@ -1,4 +1,4 @@
-# Roadwatch alcohol-sensor prototype
+# Alcohol-sensor MQ3 alert prototype
 
 The repository now separates the MQTT/WebSocket backend, the Expo Go mobile app, ESP32 firmware, and Mosquitto configuration.
 
