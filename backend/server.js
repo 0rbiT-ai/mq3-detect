@@ -11,7 +11,10 @@ const config = {
   mqttUrl: process.env.MQTT_URL || "mqtt://127.0.0.1:1883",
   sensorTopic: process.env.MQTT_SENSOR_TOPIC || "vehicle/001/sensors",
   buzzerTopic: process.env.MQTT_BUZZER_COMMAND_TOPIC || "vehicle/001/command/buzzer",
+  sim800SmsTopic: process.env.SIM800L_SMS_COMMAND_TOPIC || "vehicle/001/command/sms",
   threshold: Number(process.env.MQ3_THRESHOLD_RAW || 490),
+  sim800SmsEnabled: process.env.SIM800L_SMS_ENABLED === "true",
+  sim800SmsTo: (process.env.SIM800L_SMS_TO || "").trim(),
 };
 
 if (!Number.isFinite(config.threshold) || config.threshold < 0 || config.threshold > 4095) {
@@ -104,6 +107,11 @@ async function sendWhatsAppAlert(data) {
     },
   };
 
+  // Log only non-secret routing metadata to help diagnose Meta template errors.
+  console.log(
+    `WhatsApp request: sender=${phoneNumberId}, template=${body.template.name}, language=${body.template.language.code}`,
+  );
+
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -114,13 +122,105 @@ async function sendWhatsAppAlert(data) {
       body: JSON.stringify(body),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const metaError = result.error || {};
+      const details = [
+        `HTTP ${response.status}`,
+        `code=${metaError.code ?? "unknown"}`,
+        metaError.error_data?.details,
+        metaError.fbtrace_id ? `fbtrace_id=${metaError.fbtrace_id}` : null,
+      ].filter(Boolean).join("; ");
+      throw new Error(`${metaError.message || "Meta rejected the request."} (${details})`);
+    }
     lastAlertAt = new Date().toISOString();
     console.log(`WhatsApp template sent to configured recipient for MQ-3 raw=${data.mq3_raw}.`);
     broadcast();
   } catch (error) {
     console.error("WhatsApp alert failed:", error.message);
   }
+}
+
+function isFast2SmsConfigured() {
+  const route = (process.env.FAST2SMS_ROUTE || "q").trim().toLowerCase();
+  const fields = ["FAST2SMS_API_KEY", "FAST2SMS_TO"];
+  if (route === "dlt") fields.push("FAST2SMS_DLT_SENDER_ID", "FAST2SMS_DLT_TEMPLATE_ID");
+  return process.env.FAST2SMS_ENABLED === "true" && fields.every((field) => {
+    const value = process.env[field]?.trim();
+    return value && !value.includes("YOUR_");
+  }) && ["q", "dlt"].includes(route);
+}
+
+async function sendFast2SmsAlert(data) {
+  if (process.env.FAST2SMS_ENABLED !== "true") return;
+  if (!isFast2SmsConfigured()) {
+    console.warn("Fast2SMS alert not sent: choose FAST2SMS_ROUTE=q or dlt and fill the required Fast2SMS fields in backend/.env.local.");
+    return;
+  }
+
+  const recipient = process.env.FAST2SMS_TO.replace(/\D/g, "");
+  if (!/^\d{10}$/.test(recipient)) {
+    console.error("Fast2SMS alert not sent: FAST2SMS_TO must be an Indian 10-digit mobile number.");
+    return;
+  }
+
+  const route = (process.env.FAST2SMS_ROUTE || "q").trim().toLowerCase();
+  // Quick SMS sends free text over Fast2SMS's international route. DLT sends
+  // only a registered template and its variables.
+  const requestBody = route === "dlt"
+    ? {
+        route: "dlt",
+        sender_id: process.env.FAST2SMS_DLT_SENDER_ID.trim(),
+        message: process.env.FAST2SMS_DLT_TEMPLATE_ID.trim(),
+        variables_values: `${String(data.mq3_raw ?? "unknown")}|${config.threshold}`,
+        numbers: recipient,
+      }
+    : {
+        route: "q",
+        message: `Prototype sensor alert: MQ-3 raw reading ${String(data.mq3_raw ?? "unknown")} crossed demo threshold ${config.threshold}. This uncalibrated reading is not a BAC measurement.`,
+        numbers: recipient,
+      };
+
+  try {
+    const response = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+      method: "POST",
+      headers: {
+        Authorization: process.env.FAST2SMS_API_KEY.trim(),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const responseText = await response.text();
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      result = { message: responseText.slice(0, 500) };
+    }
+
+    if (!response.ok || result.return !== true) {
+      throw new Error(`${result.message || result.error || "Fast2SMS rejected the request."} (HTTP ${response.status}${result.status_code ? `; code=${result.status_code}` : ""})`);
+    }
+
+    console.log(`Fast2SMS ${route.toUpperCase()} route accepted alert for configured recipient (request_id=${result.request_id || "unavailable"}, MQ-3 raw=${data.mq3_raw}). Check Fast2SMS delivery reports for final delivery status.`);
+  } catch (error) {
+    console.error("Fast2SMS alert failed:", error.message);
+  }
+}
+
+function queueSim800SmsAlert(raw) {
+  if (!config.sim800SmsEnabled) return;
+  const recipient = config.sim800SmsTo.replace(/\D/g, "");
+  if (!/^\d{10,15}$/.test(recipient)) {
+    console.warn("SIM800L SMS alert not queued: set SIM800L_SMS_TO to the recipient number with country code in backend/.env.local.");
+    return;
+  }
+  const command = `${raw}|${config.threshold}|${recipient}`;
+  mqttClient.publish(config.sim800SmsTopic, command, { qos: 1 }, (error) => {
+    if (error) console.error("SIM800L SMS command publish failed:", error.message);
+    else console.log(`SIM800L SMS command queued for the ESP32 (raw=${raw}, threshold=${config.threshold}).`);
+  });
 }
 
 app.get("/health", (_request, response) => {
@@ -161,6 +261,8 @@ mqttClient.on("message", (topic, payload) => {
       alarmActive = true;
       publishBuzzer(true, `MQ-3 raw ${raw} reached threshold ${config.threshold}`);
       void sendWhatsAppAlert(data);
+      void sendFast2SmsAlert(data);
+      queueSim800SmsAlert(raw);
     } else if (!crossed && alarmActive) {
       alarmActive = false;
       publishBuzzer(false, `MQ-3 raw ${raw} fell below threshold ${config.threshold}`);
