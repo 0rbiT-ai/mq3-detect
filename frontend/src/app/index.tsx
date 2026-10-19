@@ -14,9 +14,11 @@ type Telemetry = {
   status?: string;
   mq3_raw?: number;
   mq3_mV?: number;
+  seatbelt_fastened?: boolean;
+  driver_present?: boolean;
+  // Compatibility with telemetry from firmware uploaded before this change.
   button1_pressed?: boolean;
   button2_pressed?: boolean;
-  armed?: boolean;
   buzzer_on?: boolean;
   gps_valid?: boolean;
   latitude?: number | null;
@@ -116,6 +118,9 @@ export default function MonitorScreen() {
   }, [gpsCoordinates]);
 
   const raw = telemetry?.mq3_raw;
+  const driverPresent = telemetry?.driver_present ?? telemetry?.button2_pressed;
+  const seatbeltFastened = telemetry?.seatbelt_fastened ?? telemetry?.button1_pressed;
+  const thresholdExceeded = typeof raw === "number" && raw >= serverState.threshold;
   const progress = typeof raw === "number" ? Math.min(1, raw / Math.max(1, serverState.threshold)) : 0;
   const lastSeen = serverState.updatedAt ? new Date(serverState.updatedAt).toLocaleTimeString() : "Waiting for first reading";
 
@@ -141,7 +146,7 @@ export default function MonitorScreen() {
         {serverState.alarmActive && (
           <View style={styles.alarmBanner} accessibilityRole="alert">
             <Text style={styles.alarmTitle}>Threshold reached</Text>
-            <Text style={styles.alarmCopy}>The prototype buzzer alarm is active. Check the reading and device.</Text>
+            <Text style={styles.alarmCopy}>Driver present and the raw reading reached the prototype threshold. Check the reading and device.</Text>
           </View>
         )}
 
@@ -153,7 +158,7 @@ export default function MonitorScreen() {
             </View>
             <View style={[styles.stateTag, serverState.alarmActive ? styles.tagAlarm : styles.tagNormal]}>
               <Text style={[styles.stateTagText, serverState.alarmActive ? styles.tagAlarmText : styles.tagNormalText]}>
-                {serverState.alarmActive ? "TRIGGERED" : "BELOW TRIGGER"}
+                {serverState.alarmActive ? "TRIGGERED" : driverPresent === false && thresholdExceeded ? "DRIVER ABSENT" : "BELOW TRIGGER"}
               </Text>
             </View>
           </View>
@@ -209,18 +214,18 @@ export default function MonitorScreen() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Safety inputs</Text>
-          <View style={[styles.armedTag, telemetry?.armed ? styles.armedOn : styles.armedOff]}>
-            <Text style={[styles.armedText, telemetry?.armed ? styles.armedTextOn : styles.armedTextOff]}>
-              {telemetry ? (telemetry.armed ? "ARMED" : "DISARMED") : "WAITING"}
+          <View style={[styles.armedTag, driverPresent ? styles.armedOn : styles.armedOff]}>
+            <Text style={[styles.armedText, driverPresent ? styles.armedTextOn : styles.armedTextOff]}>
+              {typeof driverPresent !== "boolean" ? "WAITING" : driverPresent ? "SEATED" : "UNOCCUPIED"}
             </Text>
           </View>
         </View>
         <View style={styles.inputPanel}>
-          <InputRow label="Button 1" pin="GPIO 32" pressed={telemetry?.button1_pressed} />
+          <InputRow label="Seatbelt" pin="GPIO 32" pressed={seatbeltFastened} activeLabel="FASTENED" inactiveLabel="UNFASTENED" />
           <View style={styles.rowDivider} />
-          <InputRow label="Button 2" pin="GPIO 33" pressed={telemetry?.button2_pressed} />
+          <InputRow label="Driver seat" pin="GPIO 33" pressed={driverPresent} activeLabel="OCCUPIED" inactiveLabel="EMPTY" />
         </View>
-        <Text style={styles.helperText}>Armed state reflects both buttons being held at once.</Text>
+        <Text style={styles.helperText}>Alcohol alerts and the buzzer activate only when the driver is seated and the reading reaches the threshold. Seatbelt status is display only.</Text>
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Buzzer</Text>
@@ -257,8 +262,8 @@ export default function MonitorScreen() {
   );
 }
 
-function InputRow({ label, pin, pressed }: { label: string; pin: string; pressed?: boolean }) {
-  const state = typeof pressed !== "boolean" ? "WAITING" : pressed ? "PRESSED" : "RELEASED";
+function InputRow({ label, pin, pressed, activeLabel, inactiveLabel }: { label: string; pin: string; pressed?: boolean; activeLabel: string; inactiveLabel: string }) {
+  const state = typeof pressed !== "boolean" ? "WAITING" : pressed ? activeLabel : inactiveLabel;
   const active = pressed === true;
   return (
     <View style={styles.inputRow}>

@@ -231,38 +231,36 @@ void loop() {
 
   int raw = analogRead(MQ3_PIN);
   int mv = analogReadMilliVolts(MQ3_PIN);
-  bool button1Pressed = digitalRead(BUTTON1_PIN) == LOW;
-  bool button2Pressed = digitalRead(BUTTON2_PIN) == LOW;
-  bool armed = button1Pressed && button2Pressed;
+  // GPIO 32 is seatbelt status (display only); GPIO 33 indicates driver presence.
+  bool seatbeltFastened = digitalRead(BUTTON1_PIN) == LOW;
+  bool driverPresent = digitalRead(BUTTON2_PIN) == LOW;
   bool gpsValid = gps.location.isValid() && gps.location.age() < 10000;
 
   char payload[320];
   if (gpsValid) {
     snprintf(payload, sizeof(payload),
              "{\"status\":\"online\",\"mq3_raw\":%d,\"mq3_mV\":%d,"
-             "\"button1_pressed\":%s,\"button2_pressed\":%s,\"armed\":%s,"
+             "\"seatbelt_fastened\":%s,\"driver_present\":%s,"
              "\"buzzer_on\":%s,\"gps_valid\":true,\"latitude\":%.6f,\"longitude\":%.6f}",
              raw, mv,
-             button1Pressed ? "true" : "false",
-             button2Pressed ? "true" : "false",
-             armed ? "true" : "false",
+             seatbeltFastened ? "true" : "false",
+             driverPresent ? "true" : "false",
              buzzerOn ? "true" : "false",
              gps.location.lat(), gps.location.lng());
   } else {
     snprintf(payload, sizeof(payload),
              "{\"status\":\"online\",\"mq3_raw\":%d,\"mq3_mV\":%d,"
-             "\"button1_pressed\":%s,\"button2_pressed\":%s,\"armed\":%s,"
+             "\"seatbelt_fastened\":%s,\"driver_present\":%s,"
              "\"buzzer_on\":%s,\"gps_valid\":false,\"latitude\":null,\"longitude\":null}",
              raw, mv,
-             button1Pressed ? "true" : "false",
-             button2Pressed ? "true" : "false",
-             armed ? "true" : "false",
+             seatbeltFastened ? "true" : "false",
+             driverPresent ? "true" : "false",
              buzzerOn ? "true" : "false");
   }
 
   bool sent = mqtt.publish(SENSOR_TOPIC, payload);
-  Serial.printf("MQ3=%d (%d mV), B1=%d B2=%d armed=%d GPS=%s buzzer=%d; MQTT %s\n",
-                raw, mv, button1Pressed, button2Pressed, armed,
+  Serial.printf("MQ3=%d (%d mV), seatbelt=%d driverPresent=%d GPS=%s buzzer=%d; MQTT %s\n",
+                raw, mv, seatbeltFastened, driverPresent,
                 gpsValid ? "FIX" : "NO FIX", buzzerOn,
                 sent ? "OK" : "FAILED");
   }

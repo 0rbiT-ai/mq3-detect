@@ -256,16 +256,21 @@ mqttClient.on("message", (topic, payload) => {
   telemetry = { topic, data, receivedAt: new Date().toISOString() };
   const raw = Number(data.mq3_raw);
   if (Number.isFinite(raw)) {
-    const crossed = raw >= config.threshold;
-    if (crossed && !alarmActive) {
+    // New firmware sends driver_present; support the previous button field too.
+    // Seatbelt status is intentionally informational and does not gate alerts.
+    const driverPresent = data.driver_present === true || data.button2_pressed === true;
+    const shouldAlarm = driverPresent && raw >= config.threshold;
+    if (shouldAlarm && !alarmActive) {
       alarmActive = true;
-      publishBuzzer(true, `MQ-3 raw ${raw} reached threshold ${config.threshold}`);
+      publishBuzzer(true, `driver present; MQ-3 raw ${raw} reached threshold ${config.threshold}`);
       void sendWhatsAppAlert(data);
       void sendFast2SmsAlert(data);
       queueSim800SmsAlert(raw);
-    } else if (!crossed && alarmActive) {
+    } else if (!shouldAlarm && alarmActive) {
       alarmActive = false;
-      publishBuzzer(false, `MQ-3 raw ${raw} fell below threshold ${config.threshold}`);
+      publishBuzzer(false, driverPresent
+        ? `MQ-3 raw ${raw} fell below threshold ${config.threshold}`
+        : "driver left the seat");
     }
   }
   broadcast();
